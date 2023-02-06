@@ -1,68 +1,24 @@
-use rand::Rng;
-use std::{borrow::Cow, str::FromStr};
+use std::borrow::Cow;
 use wgpu::util::DeviceExt;
 
-// Indicates a u32 overflow in an intermediate Collatz value
-const OVERFLOW: u32 = 0xffffffff;
+mod pendulum;
+use pendulum::Pendulum;
 
-//derive from bytemuck
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Pendulum {
-    pub length: f32,
-    pub mass: f32,
-    pub angle: f32,
-    pub angular_velocity: f32,
-}
-
-impl Pendulum {
-    pub fn new(angle: f32, angular_velocity: f32) -> Pendulum {
-        Pendulum {
-            length: 1234.0,
-            mass: 4321.0,
-            angle,
-            angular_velocity,
-        }
-    }
-
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Pendulum>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<f32>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32,
-                },
-                wgpu::VertexAttribute {
-                    offset: 2 * std::mem::size_of::<f32>() as wgpu::BufferAddress,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32,
-                },
-                wgpu::VertexAttribute {
-                    offset: 3 * std::mem::size_of::<f32>() as wgpu::BufferAddress,
-                    shader_location: 3,
-                    format: wgpu::VertexFormat::Float32,
-                },
-            ],
-        }
-    }
-}
+//if you change this you need to change the shader as well
+const SQRT_NUM_PENDULUMS: usize = 10;
+const NUM_PENDULUMS: usize = SQRT_NUM_PENDULUMS * SQRT_NUM_PENDULUMS;
 
 async fn run() {
-    let mut rng = rand::thread_rng();
-    //this is just for getting input from the command line
-    let pendula = (0..10).map(|_| Pendulum::new(1.0, 0.0)).collect::<Vec<_>>();
+    // Create a vector of pendula
+    let pendula = (0..NUM_PENDULUMS)
+        .map(|_| Pendulum::new(0.0, 0.0))
+        .collect::<Vec<_>>();
 
-    let steps = execute_gpu(pendula).await.unwrap();
+    //this takes one time step
+    let step = execute_gpu(pendula).await.unwrap();
 
-    let disp_steps: Vec<String> = steps
+    //this prints the angle of each pendulum
+    let disp_steps: Vec<String> = step
         .iter()
         .map(|n| match n {
             _ => format!("angle {:?}", n.angle),
@@ -104,7 +60,7 @@ async fn execute_gpu_inner(
     pendula: Vec<Pendulum>,
 ) -> Option<Vec<Pendulum>> {
     // Loads the shader from WGSL
-    let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let compute_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
     });
@@ -147,7 +103,7 @@ async fn execute_gpu_inner(
     let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: None,
         layout: None,
-        module: &cs_module,
+        module: &compute_shader_module,
         entry_point: "main",
     });
 
@@ -172,7 +128,7 @@ async fn execute_gpu_inner(
         compute_pass.set_pipeline(&compute_pipeline);
         compute_pass.set_bind_group(0, &bind_group, &[]);
         compute_pass.insert_debug_marker("compute collatz iterations");
-        compute_pass.dispatch_workgroups(pendula.len() as u32, 1, 1);
+        compute_pass.dispatch_workgroups(SQRT_NUM_PENDULUMS as u32, SQRT_NUM_PENDULUMS as u32, 1);
         // Number of cells to run, the (x,y,z) size of item being processed
     }
     // Sets adds copy operation to command encoder.
@@ -207,7 +163,7 @@ async fn execute_gpu_inner(
                                 // If you are familiar with C++ these 2 lines can be thought of similarly to:
                                 //   delete myPointer;
                                 //   myPointer = NULL;
-                                // It effectively frees the memory
+                                // It effectiv ely frees the memory
 
         // Returns data from buffer
 
